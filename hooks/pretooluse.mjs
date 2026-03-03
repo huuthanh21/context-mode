@@ -12,6 +12,12 @@ import { fileURLToPath } from "node:url";
 import { homedir, tmpdir } from "node:os";
 import { ROUTING_BLOCK, READ_GUIDANCE, GREP_GUIDANCE } from "./routing-block.mjs";
 
+// Sync write to stdout fd — Windows does not flush console.log before process.exit().
+function outputAndExit(data) {
+  writeFileSync(1, JSON.stringify(data) + "\n");
+  process.exit(0);
+}
+
 // ─── Security module: graceful import from compiled build ───
 let security = null;
 try {
@@ -138,23 +144,21 @@ if (tool === "Bash") {
     if (policies.length > 0) {
       const result = security.evaluateCommand(command, policies);
       if (result.decision === "deny") {
-        console.log(JSON.stringify({
+        outputAndExit({
           hookSpecificOutput: {
             hookEventName: "PreToolUse",
             permissionDecision: "deny",
             reason: `Blocked by security policy: matches deny pattern ${result.matchedPattern}`,
           },
-        }));
-        process.exit(0);
+        });
       }
       if (result.decision === "ask" && result.matchedPattern) {
-        console.log(JSON.stringify({
+        outputAndExit({
           hookSpecificOutput: {
             hookEventName: "PreToolUse",
             permissionDecision: "ask",
           },
-        }));
-        process.exit(0);
+        });
       }
       // "allow" or no match → fall through to Stage 2
     }
@@ -164,15 +168,14 @@ if (tool === "Bash") {
 
   // curl/wget → replace with echo redirect
   if (/(^|\s|&&|\||\;)(curl|wget)\s/i.test(command)) {
-    console.log(JSON.stringify({
+    outputAndExit({
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         updatedInput: {
           command: 'echo "context-mode: curl/wget blocked. You MUST use mcp__context-mode__fetch_and_index(url, source) to fetch URLs, or mcp__context-mode__execute(language, code) to run HTTP calls in sandbox. Do NOT retry with curl/wget."',
         },
       },
-    }));
-    process.exit(0);
+    });
   }
 
   // inline fetch (node -e, python -c, etc.) → replace with echo redirect
@@ -181,15 +184,14 @@ if (tool === "Bash") {
     /requests\.(get|post|put)\s*\(/i.test(command) ||
     /http\.(get|request)\s*\(/i.test(command)
   ) {
-    console.log(JSON.stringify({
+    outputAndExit({
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         updatedInput: {
           command: 'echo "context-mode: Inline HTTP blocked. Use mcp__context-mode__execute(language, code) to run HTTP calls in sandbox, or mcp__context-mode__fetch_and_index(url, source) for web pages. Do NOT retry with Bash."',
         },
       },
-    }));
-    process.exit(0);
+    });
   }
 
   // allow all other Bash commands
@@ -198,37 +200,34 @@ if (tool === "Bash") {
 
 // ─── Read: nudge toward execute_file ───
 if (tool === "Read") {
-  console.log(JSON.stringify({
+  outputAndExit({
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       additionalContext: READ_GUIDANCE,
     },
-  }));
-  process.exit(0);
+  });
 }
 
 // ─── Grep: nudge toward execute ───
 if (tool === "Grep") {
-  console.log(JSON.stringify({
+  outputAndExit({
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       additionalContext: GREP_GUIDANCE,
     },
-  }));
-  process.exit(0);
+  });
 }
 
 // ─── WebFetch: deny + redirect to sandbox ───
 if (tool === "WebFetch") {
   const url = toolInput.url ?? "";
-  console.log(JSON.stringify({
+  outputAndExit({
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
       reason: `context-mode: WebFetch blocked. Use mcp__context-mode__fetch_and_index(url: "${url}", source: "...") to fetch this URL in sandbox. Then use mcp__context-mode__search(queries: [...]) to query results. Do NOT use curl/wget — they are also blocked.`,
     },
-  }));
-  process.exit(0);
+  });
 }
 
 // ─── Task: inject context-mode routing into subagent prompts ───
@@ -241,13 +240,12 @@ if (tool === "Task") {
       ? { ...toolInput, prompt: prompt + ROUTING_BLOCK, subagent_type: "general-purpose" }
       : { ...toolInput, prompt: prompt + ROUTING_BLOCK };
 
-  console.log(JSON.stringify({
+  outputAndExit({
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       updatedInput,
     },
-  }));
-  process.exit(0);
+  });
 }
 
 // ─── MCP execute: security check for shell commands ───
@@ -258,23 +256,21 @@ if (tool.includes("context-mode") && tool.endsWith("__execute")) {
     if (policies.length > 0) {
       const result = security.evaluateCommand(code, policies);
       if (result.decision === "deny") {
-        console.log(JSON.stringify({
+        outputAndExit({
           hookSpecificOutput: {
             hookEventName: "PreToolUse",
             permissionDecision: "deny",
             reason: `Blocked by security policy: shell code matches deny pattern ${result.matchedPattern}`,
           },
-        }));
-        process.exit(0);
+        });
       }
       if (result.decision === "ask" && result.matchedPattern) {
-        console.log(JSON.stringify({
+        outputAndExit({
           hookSpecificOutput: {
             hookEventName: "PreToolUse",
             permissionDecision: "ask",
           },
-        }));
-        process.exit(0);
+        });
       }
     }
   }
@@ -289,14 +285,13 @@ if (tool.includes("context-mode") && tool.endsWith("__execute_file")) {
     const denyGlobs = security.readToolDenyPatterns("Read", process.env.CLAUDE_PROJECT_DIR);
     const evalResult = security.evaluateFilePath(filePath, denyGlobs);
     if (evalResult.denied) {
-      console.log(JSON.stringify({
+      outputAndExit({
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
           permissionDecision: "deny",
           reason: `Blocked by security policy: file path matches Read deny pattern ${evalResult.matchedPattern}`,
         },
-      }));
-      process.exit(0);
+      });
     }
 
     // Check code parameter against Bash deny patterns (same as execute)
@@ -307,23 +302,21 @@ if (tool.includes("context-mode") && tool.endsWith("__execute_file")) {
       if (policies.length > 0) {
         const result = security.evaluateCommand(code, policies);
         if (result.decision === "deny") {
-          console.log(JSON.stringify({
+          outputAndExit({
             hookSpecificOutput: {
               hookEventName: "PreToolUse",
               permissionDecision: "deny",
               reason: `Blocked by security policy: shell code matches deny pattern ${result.matchedPattern}`,
             },
-          }));
-          process.exit(0);
+          });
         }
         if (result.decision === "ask" && result.matchedPattern) {
-          console.log(JSON.stringify({
+          outputAndExit({
             hookSpecificOutput: {
               hookEventName: "PreToolUse",
               permissionDecision: "ask",
             },
-          }));
-          process.exit(0);
+          });
         }
       }
     }
@@ -341,23 +334,21 @@ if (tool.includes("context-mode") && tool.endsWith("__batch_execute")) {
         const cmd = entry.command ?? "";
         const result = security.evaluateCommand(cmd, policies);
         if (result.decision === "deny") {
-          console.log(JSON.stringify({
+          outputAndExit({
             hookSpecificOutput: {
               hookEventName: "PreToolUse",
               permissionDecision: "deny",
               reason: `Blocked by security policy: batch command "${entry.label ?? cmd}" matches deny pattern ${result.matchedPattern}`,
             },
-          }));
-          process.exit(0);
+          });
         }
         if (result.decision === "ask" && result.matchedPattern) {
-          console.log(JSON.stringify({
+          outputAndExit({
             hookSpecificOutput: {
               hookEventName: "PreToolUse",
               permissionDecision: "ask",
             },
-          }));
-          process.exit(0);
+          });
         }
       }
     }
