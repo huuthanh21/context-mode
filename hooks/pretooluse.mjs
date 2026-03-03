@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync, existsSync, rmSync, cpSync, readdirSync } 
 import { resolve, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir, tmpdir } from "node:os";
+import { ROUTING_BLOCK, READ_GUIDANCE, GREP_GUIDANCE } from "./routing-block.mjs";
 
 // ─── Self-heal: rename dir to correct version, fix registry + hooks ───
 try {
@@ -150,8 +151,7 @@ if (tool === "Read") {
   console.log(JSON.stringify({
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
-      additionalContext:
-        '<context_guidance>\n  <tip>\n    This operation may flood your context window. To stay efficient:\n    - Use mcp__context-mode__execute_file(path, language, code) to process large files in the sandbox.\n    - Only your final printed summary will enter the context.\n  </tip>\n</context_guidance>',
+      additionalContext: READ_GUIDANCE,
     },
   }));
   process.exit(0);
@@ -162,8 +162,7 @@ if (tool === "Grep") {
   console.log(JSON.stringify({
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
-      additionalContext:
-        '<context_guidance>\n  <tip>\n    This operation may flood your context window. To stay efficient:\n    - Use mcp__context-mode__execute(language: "shell", code: "...") to run searches in the sandbox.\n    - Only your final printed summary will enter the context.\n  </tip>\n</context_guidance>',
+      additionalContext: GREP_GUIDANCE,
     },
   }));
   process.exit(0);
@@ -196,46 +195,6 @@ if (tool === "WebSearch") {
 if (tool === "Task") {
   const subagentType = toolInput.subagent_type ?? "";
   const prompt = toolInput.prompt ?? "";
-
-  const ROUTING_BLOCK = `
-
-<context_window_protection>
-  <priority_instructions>
-    Raw tool output floods your context window. You MUST use context-mode MCP tools to keep raw data in the sandbox.
-  </priority_instructions>
-
-  <tool_selection_hierarchy>
-    1. GATHER: mcp__context-mode__batch_execute(commands, queries)
-       - Primary tool for research. Runs all commands, auto-indexes, and searches.
-       - ONE call replaces many individual steps.
-    2. FOLLOW-UP: mcp__context-mode__search(queries: ["q1", "q2", ...])
-       - Use for all follow-up questions. ONE call, many queries.
-    3. PROCESSING: mcp__context-mode__execute(language, code) | mcp__context-mode__execute_file(path, language, code)
-       - Use for API calls, log analysis, and data processing.
-  </tool_selection_hierarchy>
-
-  <forbidden_actions>
-    - DO NOT use Bash for commands producing >20 lines of output.
-    - DO NOT use Read for large files.
-    - DO NOT use WebFetch (use mcp__context-mode__fetch_and_index instead).
-    - Bash is ONLY for git/mkdir/rm/mv/navigation.
-  </forbidden_actions>
-
-  <output_constraints>
-    <word_limit>Keep your final response under 500 words.</word_limit>
-    <artifact_policy>
-      Write artifacts (code, configs, PRDs) to FILES. NEVER return them as inline text.
-      Return only: file path + 1-line description.
-    </artifact_policy>
-    <response_format>
-      Your response must be a concise summary:
-      - Actions taken (2-3 bullets)
-      - File paths created/modified
-      - Knowledge base source labels (so parent can search)
-      - Key findings
-    </response_format>
-  </output_constraints>
-</context_window_protection>`;
 
   const updatedInput =
     subagentType === "Bash"
